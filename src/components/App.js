@@ -8,36 +8,79 @@ import CitiesList  from './CitiesList';
 class App extends React.Component {
   state = {
     cities: [] || '',
-    descriptions: [] || '',
     allData: [] || ''
   };
 
   onSearchSubmit = async (term) => {
-    this.setState({ cities: [], description: [], allData: []})
+    this.setState({ cities: [], description: [], allData: []});
+
     const response = await axios.get(`https://api.openaq.org/v1/locations?country=${term}&order_by=count&sort=desc&limit=10`, 'utf8');
+    let cities = response.data.results;
 
-    this.setState({ cities: response.data.results });
+    let allData = cities.map((city) => {
+      return {
+        city: city.city,
+        location: city.location,
+        count: city.count,
+        description: 'downloading...'
+      }
+    });
+    this.setState({ allData: allData, cities: cities });
 
-    this.state.cities.map(city => {
-      return (
-        axios.get(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${city.city}&origin=*`, 'utf8').then(res => {
-          const descAll = this.state.descriptions;
-          const description = res.data[2][0] === '' ? "No wikipedia description" : res.data[2][0];
+    cities = await Promise.all(
+      cities.map(city => axios.get(`https://en.wikipedia.org/w/api.php`, {
+          params: {
+            action: 'query',
+            format: 'json',
+            list: 'search',
+            srsearch: city.city.replace(/[()]/g, '') + ' insource:"infobox settlement"',
+            origin: '*'
+          }
+        }, 'utf8')
+        .then(res => {
+          let pageid = res.data.query.search[0].pageid;
+          city.pageid = pageid;
 
-          descAll[city.city] = description;
+          return city;
+        })
+      )
+    )
 
-          this.setState({ descriptions: descAll });
+    let pageids = cities.map(city => city.pageid);
+    await axios.get('https://en.wikipedia.org/w/api.php', {
+      params: {
+        action: 'query',
+        format: 'json',
+        prop: 'extracts',
+        exsentences: 1,
+        exintro: true,
+        explaintext: true,
+        exsectionformat: 'plain',
+        pageids: pageids.join('|'),
+        redirects: 1,
+        uselang: 'en',
+        origin: '*'
+      }
+    }).then(res => {
+      let searchresults = res.data.query.pages;
 
-          const result = this.state.cities.map((city) => { return {
-            city: city.city,
-            location: city.location,
-            count: city.count,
-            description: this.state.descriptions[city.city]
-          }});
-          this.setState({ allData: result })
+      Object.keys(searchresults).map(searchresult => Object.keys(cities).map(city => {
+          if (searchresult == cities[city].pageid) {
+            cities[city].description = searchresults[searchresult].extract;
+          }
         })
       )
     });
+
+    allData = cities.map(city => {
+      return {
+        city: city.city,
+        location: city.location,
+        count: city.count,
+        description: city.description
+      }
+    });
+    this.setState({ allData: allData, cities: cities });
   }
 
   componentWillMount() {
